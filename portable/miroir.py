@@ -667,6 +667,9 @@ def _snapshot(root, path: str) -> None:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):  # console Windows en cp1252 : on force l'UTF-8
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ctk.set_appearance_mode("system")
     ctk.set_default_color_theme("blue")
     if "--install-scrcpy" in sys.argv:  # vérification de l'installation sans interface
