@@ -29,13 +29,18 @@ from tkinter import PhotoImage, filedialog
 import customtkinter as ctk
 
 APP_NAME = "Miroir Téléphone"
-VERSION = "0.1.0-experimental"
+VERSION = "0.2.0-experimental"
 IS_WIN = sys.platform == "win32"
 NO_WINDOW = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW : aucune console ne s'ouvre
 MIRROR_TITLE = "Android"
 REC_TITLE = "Android - enregistrement"
 SCRCPY_API = "https://api.github.com/repos/Genymobile/scrcpy/releases/latest"
 
+QUALITY = {  # préréglages scrcpy : définition max, débit vidéo, images/s
+    "Standard": ["--max-size", "1024", "--video-bit-rate", "4M", "--max-fps", "30"],
+    "Haute": ["--max-size", "1920", "--video-bit-rate", "12M", "--max-fps", "60"],
+    "Max": ["--video-bit-rate", "24M", "--max-fps", "120"],
+}
 GREEN, ORANGE, RED, GRAY = "#34C759", "#FF9500", "#FF3B30", "#8E8E93"
 
 
@@ -234,17 +239,17 @@ def start_adb_server(tools: Tools) -> None:
             pass
 
 
-def android_state(tools: Tools) -> tuple[str, str | None]:
+def android_state(tools: Tools, prefer: tuple = ()) -> tuple[str, str | None]:
     if not tools.adb or not tools.scrcpy:
         return "missing", None
     r = run([tools.adb, "devices"], timeout=4)
     if r is None:
         return "adb-stuck", None
     lines = r.stdout.decode(errors="replace").splitlines()[1:]
-    for line in lines:
-        parts = line.split("\t")
-        if len(parts) == 2 and parts[1].strip() == "device":
-            return "ready", parts[0]
+    ready = [p[0] for p in (line.split("\t") for line in lines) if len(p) == 2 and p[1].strip() == "device"]
+    for serial in [*[x for x in prefer if x], *ready]:
+        if serial in ready:
+            return "ready", serial
     if any("unauthorized" in line for line in lines):
         return "unauthorized", None
     if any("no permissions" in line for line in lines):
@@ -261,10 +266,17 @@ class Android:
         self.rec: subprocess.Popen | None = None
         self.rec_file: Path | None = None
         self.rec_start = 0.0
+        self.quality = "Haute"
+        self.wifi: str | None = None
+
+    @property
+    def wireless(self) -> bool:
+        return bool(self.serial) and ":" in self.serial
 
     def _spawn(self, *extra: str, title: str = MIRROR_TITLE) -> subprocess.Popen:
         log = open(LOG, "ab")  # noqa: SIM115 (fermé par le processus fils)
-        return subprocess.Popen([self.tools.scrcpy, "-s", self.serial, "--stay-awake", "--window-title", title, *extra],
+        return subprocess.Popen([self.tools.scrcpy, "-s", self.serial, "--stay-awake", *QUALITY[self.quality],
+                                 "--window-title", title, *extra],
                                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 env=self.tools.env(), creationflags=NO_WINDOW)
 
@@ -276,10 +288,77 @@ class Android:
     def recording(self) -> bool:
         return self._alive(self.rec)
 
-    def open_mirror(self) -> None:
+    def open_mirror(self, *extra: str) -> None:
         if self.serial and not self._alive(self.mirror) and not (IS_WIN and self.recording):
-            self.mirror = self._spawn()
+            self.mirror = self._spawn(*extra)
             self.mirror_start = time.time()
+
+    # ---- fonctions « Pro » : qualité, plein écran, sans fil, fichiers, partage
+    def set_quality(self, q: str) -> str:
+        self.quality = q if q in QUALITY else "Haute"
+        if self._alive(self.mirror):
+            self.stop_mirror()
+            self.open_mirror()
+        return f"Qualité {self.quality} : {' '.join(QUALITY[self.quality]).replace('--', '')}"
+
+    def fullscreen(self) -> str:
+        self.stop_mirror()
+        self.open_mirror("--fullscreen")
+        return "Plein écran : Alt+F dans le miroir pour en sortir"
+
+    def _adb(self, *args: str, timeout: float = 10):
+        return run([self.tools.adb, *args], timeout=timeout)
+
+    def device_ip(self) -> str | None:
+        for cmd, key in ((["ip", "-f", "inet", "addr", "show", "wlan0"], "inet"), (["ip", "route"], "src")):
+            r = self._adb("-s", self.serial, "shell", *cmd, timeout=5)
+            words = r.stdout.decode(errors="replace").split() if r else []
+            for i, w in enumerate(words[:-1]):
+                if w == key:
+                    return words[i + 1].split("/")[0]
+        return None
+
+    def wireless_toggle(self) -> str:
+        """Passe en adb Wi-Fi (port 5555) puis s'y connecte ; un second clic revient à l'USB."""
+        if self.wireless:
+            self.stop_mirror()
+            self._adb("disconnect", self.serial, timeout=5)
+            self.wifi = self.serial = None
+            return "Mode sans fil désactivé : rebranche le câble USB"
+        ip = self.device_ip()
+        if not ip:
+            return "✗ Adresse Wi-Fi introuvable : le téléphone est-il connecté au Wi-Fi ?"
+        self.stop_mirror()
+        self._adb("-s", self.serial, "tcpip", "5555")
+        addr = f"{ip}:5555"
+        for _ in range(6):
+            time.sleep(1.5)
+            r = self._adb("connect", addr, timeout=5)
+            if r and b"connected to" in r.stdout:
+                self.wifi = self.serial = addr
+                self.open_mirror()
+                return f"Sans fil actif ({addr}) : tu peux débrancher le câble"
+        return f"✗ Connexion sans fil impossible ({addr}) : PC et téléphone sont-ils sur le même réseau ?"
+
+    def send_files(self, files) -> str:
+        """APK → installé ; autres fichiers → Téléchargements du téléphone."""
+        ok = ko = 0
+        for f in files:
+            if f.lower().endswith(".apk"):
+                r = self._adb("-s", self.serial, "install", "-r", f, timeout=300)
+            else:
+                r = self._adb("-s", self.serial, "push", f, "/sdcard/Download/", timeout=600)
+            out = (r.stdout + r.stderr).decode(errors="replace") if r else ""
+            if r and r.returncode == 0 and ("pushed" in out or "Success" in out):
+                ok += 1
+            else:
+                ko += 1
+        if ko:
+            return f"⚠ {ok} fichier(s) envoyé(s), {ko} en échec"
+        return f"✓ {ok} fichier(s) envoyé(s) (APK installés, autres dans Téléchargements)"
+
+    def share_command(self) -> str | None:
+        return f"scrcpy --tcpip={self.serial}" if self.wireless else None
 
     def stop_mirror(self) -> None:
         p, self.mirror = self.mirror, None
@@ -383,6 +462,8 @@ class App:
         self.pinned = bool(self.cfg.get("pinned", True))
         self.tools = Tools()
         self.android = Android(self.tools)
+        self.android.quality = self.cfg.get("quality", "Haute") if self.cfg.get("quality") in QUALITY else "Haute"
+        self.android.wifi = self.cfg.get("wifi") or None
         self.iphone = IPhone(self.tools)
         self.events: queue.Queue = queue.Queue()
         self.busy = False
@@ -428,8 +509,9 @@ class App:
             self.pin.select()
 
         self.a = self._card("A", GREEN, "Android", [("Miroir", "Ctrl+5", self.on_android_show),
-                                               ("Capture", "Ctrl+1", self.on_android_capture),
-                                               ("Vidéo", "Ctrl+2", self.on_android_video)])
+                                                   ("Capture", "Ctrl+1", self.on_android_capture),
+                                                   ("Vidéo", "Ctrl+2", self.on_android_video)])
+        self._android_tools(self.a["frame"])
         self.i = self._card("i", "#0A84FF", "iPhone (AirPlay)", [("Miroir", "Ctrl+6", self.on_iphone_show)])
 
         self.status = ctk.CTkLabel(r, text="", text_color=GRAY, wraplength=380, justify="left",
@@ -463,14 +545,34 @@ class App:
         st = ctk.CTkLabel(line, text="", text_color=GRAY, font=ctk.CTkFont(size=12), anchor="w")
         st.pack(side="left", fill="x", expand=True)
         row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=(0, 14))
+        row.pack(fill="x", padx=14, pady=(0, 10))
         btns = []
         for i, (label, key, cmd) in enumerate(buttons):
             b = ctk.CTkButton(row, text=label, command=cmd, height=36, corner_radius=8)
             b.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
             row.grid_columnconfigure(i, weight=1, uniform="b")
             btns.append(b)
-        return {"dot": dot, "status": st, "buttons": btns}
+        return {"frame": card, "dot": dot, "status": st, "buttons": btns}
+
+    def _android_tools(self, card) -> None:
+        """Options Android : qualité, sans fil, plein écran, envoi de fichiers, partage."""
+        q = ctk.CTkFrame(card, fg_color="transparent")
+        q.pack(fill="x", padx=14, pady=(0, 8))
+        ctk.CTkLabel(q, text="Qualité", text_color=GRAY, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 8))
+        self.quality = ctk.CTkSegmentedButton(q, values=list(QUALITY), command=self.on_quality, height=28)
+        self.quality.set(self.android.quality)
+        self.quality.pack(side="left", fill="x", expand=True)
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(0, 14))
+        self.tools_btns = {}
+        for i, (key, label, cmd) in enumerate((("wifi", "Sans fil", self.on_wireless),
+                                               ("full", "Plein écran", self.on_fullscreen),
+                                               ("send", "Envoyer…", self.on_send),
+                                               ("share", "Partager", self.on_share))):
+            b = ctk.CTkButton(row, text=label, command=cmd, height=30, corner_radius=8, font=ctk.CTkFont(size=12))
+            b.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0))
+            row.grid_columnconfigure(i, weight=1, uniform="t")
+            self.tools_btns[key] = b
 
     def _bind_keys(self) -> None:
         keys = {"1": self.on_android_capture, "2": self.on_android_video, "5": self.on_android_show,
@@ -535,7 +637,7 @@ class App:
         if a.recording:
             self._paint(self.a, RED, "Enregistrement en cours")
         elif a.serial:
-            self._paint(self.a, GREEN, f"Connecté · {a.serial}")
+            self._paint(self.a, GREEN, f"{'Sans fil' if a.wireless else 'USB'} · {a.serial}")
         else:
             self._paint(self.a, *texts.get(a.state, texts["none"]))
         ready = bool(a.serial) and not self.busy
@@ -548,6 +650,13 @@ class App:
             self._enable(vid, True, f"■  {fmt(time.time() - a.rec_start)}", danger=True)
         else:
             self._enable(vid, ready, "Vidéo")
+
+        on = ready and not a.recording
+        self._enable(self.tools_btns["wifi"], on, "USB" if a.wireless else "Sans fil")
+        self._enable(self.tools_btns["full"], on)
+        self._enable(self.tools_btns["send"], on)
+        self._enable(self.tools_btns["share"], on and a.wireless)
+        self.quality.configure(state="disabled" if a.recording else "normal")
 
         ip = self.iphone
         if not self.tools.uxplay:
@@ -568,8 +677,14 @@ class App:
 
     def _poll_loop(self) -> None:
         start_adb_server(self.tools)
+        n = 0
         while not self.closing:
-            self.events.put(("poll", android_state(self.tools)))
+            a = self.android
+            # mode sans fil mémorisé : nouvelle tentative de connexion toutes les ~15 s
+            if a.wifi and a.serial != a.wifi and self.tools.adb and n % 5 == 0:
+                run([self.tools.adb, "connect", a.wifi], timeout=3)
+            n += 1
+            self.events.put(("poll", android_state(self.tools, (a.wifi, a.serial))))
             time.sleep(3)
 
     def apply_poll(self, result) -> None:
@@ -649,6 +764,44 @@ class App:
             self.background(self.android.stop_video)
         else:
             self.set_status(self.android.start_video(self.out))
+
+    def on_quality(self, value: str) -> None:
+        self.cfg["quality"] = value
+        save_config(self.cfg)
+        self.set_status(self.android.set_quality(value))
+
+    def on_fullscreen(self) -> None:
+        if self.android.serial and not self.busy:
+            self.set_status(self.android.fullscreen())
+
+    def on_wireless(self) -> None:
+        if not self.android.serial or self.busy:
+            return
+
+        def work():
+            msg = self.android.wireless_toggle()
+            self.cfg["wifi"] = self.android.wifi
+            save_config(self.cfg)
+            return msg
+
+        self.background(work)
+
+    def on_send(self) -> None:
+        if not self.android.serial or self.busy:
+            return
+        files = filedialog.askopenfilenames(title="Envoyer au téléphone (APK : installés ; autres : Téléchargements)")
+        if files:
+            self.background(self.android.send_files, list(files))
+
+    def on_share(self) -> None:
+        cmd = self.android.share_command()
+        if not cmd:
+            self.set_status("Active d'abord le mode sans fil pour partager le téléphone sur le réseau local.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(cmd)
+        self.set_status(f"Copié : « {cmd} ». À lancer sur un poste du même réseau ; "
+                        "le téléphone demandera d'autoriser ce poste.")
 
     def on_iphone_show(self) -> None:
         self.set_status(self.iphone.show())

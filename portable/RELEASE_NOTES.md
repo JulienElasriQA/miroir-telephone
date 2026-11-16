@@ -2,7 +2,9 @@
 
 ## Ce qui marche
 
-- **Android** : miroir, capture PNG et vidéo MP4 via [scrcpy](https://github.com/Genymobile/scrcpy). Si scrcpy est absent, le bouton **Installer** le télécharge dans le dossier de l'utilisateur (somme SHA-256 vérifiée). Aucun droit administrateur n'est nécessaire.
+- **Android** via [scrcpy](https://github.com/Genymobile/scrcpy) : miroir piloté au clavier et à la souris, capture PNG, vidéo MP4.
+- **Nouveau en 0.2 (fonctions inspirées de Vysor Pro)** : qualité Standard / Haute / Max, plein écran, mode sans fil avec reconnexion automatique, envoi de fichiers (APK installés), partage sur le réseau local.
+- Si scrcpy est absent, le bouton **Installer** le télécharge dans le dossier de l'utilisateur (somme SHA-256 vérifiée). Aucun droit administrateur n'est nécessaire.
 - **iPhone** : recopie d'écran AirPlay, seulement si [UxPlay](https://github.com/FDH2/UxPlay) est installé. Il n'y a pas de capture ni de vidéo iPhone pour l'instant.
 
 ## Installation (sans admin)

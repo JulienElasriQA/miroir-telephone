@@ -50,8 +50,8 @@ const st = {
 function detectAndroid() {
   if (!st.hasAdb) return
   const lines = (sh(tmo(4, 'adb devices')) || '').split('\n').slice(1)
-  const ready = lines.find((l) => /\tdevice$/.test(l))
-  st.serial = ready ? ready.split('\t')[0] : null
+  const ready = lines.filter((l) => /\tdevice$/.test(l)).map((l) => l.split('\t')[0])
+  st.serial = ready.includes(st.wifi) ? st.wifi : ready.includes(st.serial) ? st.serial : ready[0] || null
   st.androidUnauth = lines.some((l) => /\tunauthorized$/.test(l))
 }
 
@@ -75,8 +75,8 @@ function killMirror() {
   st.mirrorPid = null
 }
 
-function startMirror() {
-  st.mirrorPid = sh(`scrcpy -s ${q(st.serial)} --stay-awake --window-title 'Android' >>${q(SCRCPY_LOG)} 2>&1 & echo $!`)
+function startMirror(extra) {
+  st.mirrorPid = sh(`scrcpy -s ${q(st.serial)} --stay-awake ${QUALITY[quality].args} ${extra || ''} --window-title 'Android' >>${q(SCRCPY_LOG)} 2>&1 & echo $!`)
   st.mirrorStart = now()
 }
 
@@ -112,6 +112,91 @@ function watchMirror() {
   }
 }
 
+// ---------- Fonctions « Pro » : qualité, plein écran, sans fil, envoi de fichiers, partage ----------
+const QUALITY = {
+  standard: { label: 'Qualité standard', args: '--max-size 1024 --video-bit-rate 4M --max-fps 30' },
+  haute: { label: 'Haute qualité', args: '--max-size 1920 --video-bit-rate 12M --max-fps 60' },
+  max: { label: 'Qualité max', args: '--video-bit-rate 24M --max-fps 120' },
+}
+const QKEYS = ['standard', 'haute', 'max']
+let quality = QUALITY[pref('quality', 'haute')] ? pref('quality', 'haute') : 'haute'
+st.wifi = pref('wifiAddr', '') || null
+const isWifi = (s) => !!s && s.includes(':')
+
+function setQuality(i) {
+  quality = QKEYS[i] || 'haute'
+  setPref('quality', quality)
+  if (alive(st.mirrorPid)) { killMirror(); startMirror() }
+  return `🎚 ${QUALITY[quality].label} (${QUALITY[quality].args.replace(/--/g, '').replace(/ (\d)/g, ' $1')})`
+}
+
+function fullscreenAndroid() {
+  killMirror()
+  st.mirrorRetries = 0
+  startMirror('--fullscreen')
+  return '⛶ Plein écran : ⌘F dans le miroir pour en sortir'
+}
+
+function deviceIp() {
+  const s = q(st.serial)
+  return sh(`${tmo(5, `adb -s ${s} shell ip -f inet addr show wlan0`)} | awk '/inet /{print $2}' | cut -d/ -f1 | head -1`) ||
+    sh(`${tmo(5, `adb -s ${s} shell ip route`)} | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}' | head -1`) || null
+}
+
+// Passe le téléphone en adb Wi-Fi (port 5555) puis s'y connecte ; un second clic revient à l'USB
+function wirelessToggle() {
+  if (isWifi(st.serial)) {
+    killMirror()
+    sh(tmo(5, `adb disconnect ${q(st.serial)}`))
+    st.wifi = null; st.serial = null
+    setPref('wifiAddr', '')
+    return '📶 Mode sans fil désactivé : rebranche le câble USB'
+  }
+  const ip = deviceIp()
+  if (!ip) return '✗ Adresse Wi-Fi introuvable : le téléphone est-il connecté au Wi-Fi ?'
+  killMirror()
+  sh(tmo(10, `adb -s ${q(st.serial)} tcpip 5555`))
+  const addr = `${ip}:5555`
+  let ok = false
+  for (let i = 0; i < 6 && !ok; i++) { delay(1.5); ok = /connected to/.test(sh(tmo(5, `adb connect ${addr}`)) || '') }
+  if (!ok) return `✗ Connexion sans fil impossible (${addr}) : Mac et téléphone sont-ils sur le même réseau ?`
+  st.wifi = addr; st.serial = addr
+  setPref('wifiAddr', addr)
+  st.mirrorRetries = 0
+  startMirror()
+  return `📶 Sans fil actif (${addr}) : tu peux débrancher le câble`
+}
+
+// APK → installé ; autres fichiers → dossier Téléchargements du téléphone (le miroir accepte aussi le glisser-déposer)
+function sendFiles() {
+  const p = $.NSOpenPanel.openPanel
+  p.setCanChooseFiles(true); p.setCanChooseDirectories(false); p.setAllowsMultipleSelection(true)
+  p.setPrompt('Envoyer'); p.setMessage('APK : installé sur le téléphone. Autres fichiers : copiés dans Téléchargements.')
+  if (Number(p.runModal) !== 1) return ''
+  const urls = p.URLs
+  let okCount = 0, ko = 0
+  for (let i = 0; i < Number(urls.count); i++) {
+    const f = ObjC.unwrap(urls.objectAtIndex(i).path)
+    setStatus(`⬆️ Envoi de ${f.split('/').pop()}…`)
+    const out = /\.apk$/i.test(f)
+      ? sh(`${tmo(300, `adb -s ${q(st.serial)} install -r ${q(f)}`)} 2>&1`)
+      : sh(`${tmo(600, `adb -s ${q(st.serial)} push ${q(f)} /sdcard/Download/`)} 2>&1`)
+    if (out !== null && /\d+ files? pushed|^Success/m.test(out)) okCount++; else ko++
+  }
+  if (okCount) ding()
+  return ko ? `⚠️ ${okCount} fichier(s) envoyé(s), ${ko} en échec` : `✅ ${okCount} fichier(s) envoyé(s) (APK installés, autres dans Téléchargements)`
+}
+
+// Partage sur le réseau local : copie la commande qu'un collègue lance pour voir et piloter le téléphone
+function shareAndroid() {
+  if (!isWifi(st.serial)) return 'ℹ️ Active d’abord le mode sans fil (bouton Wi-Fi) pour partager le téléphone sur le réseau local.'
+  const cmd = `scrcpy --tcpip=${st.serial}`
+  const pb = $.NSPasteboard.generalPasteboard
+  pb.clearContents
+  pb.setStringForType($(cmd), $.NSPasteboardTypeString)
+  return `🔗 Copié : « ${cmd} ». À lancer sur un poste du même réseau ; le téléphone demandera d’autoriser ce poste.`
+}
+
 function androidCapture() {
   const f = `${OUT}/Android_${stamp()}.png`
   sh(`${tmo(15, `adb -s ${q(st.serial)} exec-out screencap -p`)} > ${q(f)}`)
@@ -123,7 +208,7 @@ function androidCapture() {
 function androidVideoToggle() {
   if (st.recPid) return stopAndroidVideo()
   st.recFile = `${OUT}/Android_${stamp()}.mp4`
-  st.recPid = sh(`scrcpy -s ${q(st.serial)} --no-playback --no-window --record ${q(st.recFile)} >/dev/null 2>&1 & echo $!`)
+  st.recPid = sh(`scrcpy -s ${q(st.serial)} ${QUALITY[quality].args} --no-playback --no-window --record ${q(st.recFile)} >/dev/null 2>&1 & echo $!`)
   st.recStart = now()
   return st.recPid ? '🔴 Vidéo Android en cours…' : '❌ Impossible de démarrer la vidéo Android'
 }
@@ -227,7 +312,7 @@ function stopIOSVideo() {
 }
 
 // ---------- Interface ----------
-const W = 380, H = 424, CW = W - 32, CH = 116
+const W = 380, H = 468, CW = W - 32, CH = 116, CHA = 160
 const COLORS = {
   green: $.NSColor.systemGreenColor, orange: $.NSColor.systemOrangeColor,
   red: $.NSColor.systemRedColor, gray: $.NSColor.tertiaryLabelColor, blue: $.NSColor.systemBlueColor,
@@ -283,7 +368,7 @@ function mkButton(parent, title, symbol, frame, tag, key, tip) {
   b.setBezelStyle(1)
   b.setTitle(title)
   const img = symbol && sym(symbol, 13, 0.23)
-  if (img) { b.setImage(img); b.setImagePosition(7 /* à gauche du titre */); b.setImageHugsTitle(true) }
+  if (img) { b.setImage(img); b.setImagePosition(title ? 7 /* à gauche du titre */ : 1 /* image seule */); b.setImageHugsTitle(true) }
   b.setTarget(ctrl); b.setAction('click:'); b.setTag(tag)
   if (key) { b.setKeyEquivalent(key); b.setKeyEquivalentModifierMask(1 << 20 /* ⌘ */) }
   if (tip) b.setToolTip(tip)
@@ -303,8 +388,8 @@ function mkIconButton(parent, symbol, frame, tag, tip) {
   return b
 }
 
-function mkCard(parent, y) {
-  const box = $.NSBox.alloc.initWithFrame(rect(16, y, CW, CH))
+function mkCard(parent, y, h) {
+  const box = $.NSBox.alloc.initWithFrame(rect(16, y, CW, h))
   box.setBoxType(4) // personnalisé
   box.setTitlePosition(0)
   box.setCornerRadius(14)
@@ -317,17 +402,36 @@ function mkCard(parent, y) {
 }
 
 // Carte d'un appareil : icône, nom, pastille d'état, bouton « afficher », boutons capture / vidéo
-function mkDevice(parent, y, title, icon, tint, tags, keys) {
-  const c = mkCard(parent, y)
-  mkImage(c, rect(14, 66, 36, 36), sym(icon[0], 26, 0.23) || sym(icon[1], 26, 0.23), tint)
-  mkLabel(c, title, rect(58, 80, 220, 22), { size: 15, weight: 0.3 })
-  const dot = mkImage(c, rect(58, 65, 10, 14), sym('circle.fill', 7), COLORS.gray)
-  const status = mkLabel(c, '', rect(72, 63, CW - 72 - 44, 17), { size: 12, color: $.NSColor.secondaryLabelColor })
-  const bw = (CW - 28 - 16) / 3
-  const show = mkButton(c, 'Miroir', 'macwindow', rect(14, 12, bw, 34), tags[2], keys[2], `Afficher la vue miroir (⌘${keys[2]})`)
-  const cap = mkButton(c, 'Capture', 'camera', rect(22 + bw, 12, bw, 34), tags[0], keys[0], `Capture d’écran (⌘${keys[0]})`)
-  const vid = mkButton(c, 'Vidéo', 'record.circle', rect(30 + 2 * bw, 12, bw, 34), tags[1], keys[1], `Démarrer / arrêter la vidéo (⌘${keys[1]})`)
-  return { dot, status, show, cap, vid, key: keys[1] }
+function mkDevice(parent, y, h, title, icon, tint, tags, keys) {
+  const c = mkCard(parent, y, h)
+  mkImage(c, rect(14, h - 50, 36, 36), sym(icon[0], 26, 0.23) || sym(icon[1], 26, 0.23), tint)
+  mkLabel(c, title, rect(58, h - 36, 220, 22), { size: 15, weight: 0.3 })
+  const dot = mkImage(c, rect(58, h - 51, 10, 14), sym('circle.fill', 7), COLORS.gray)
+  const status = mkLabel(c, '', rect(72, h - 53, CW - 72 - 14, 17), { size: 12, color: $.NSColor.secondaryLabelColor })
+  const bw = (CW - 28 - 16) / 3, by = h - 104
+  const show = mkButton(c, 'Miroir', 'macwindow', rect(14, by, bw, 34), tags[2], keys[2], `Afficher la vue miroir, contrôle clavier et souris (⌘${keys[2]})`)
+  const cap = mkButton(c, 'Capture', 'camera', rect(22 + bw, by, bw, 34), tags[0], keys[0], `Capture d’écran (⌘${keys[0]})`)
+  const vid = mkButton(c, 'Vidéo', 'record.circle', rect(30 + 2 * bw, by, bw, 34), tags[1], keys[1], `Démarrer / arrêter la vidéo (⌘${keys[1]})`)
+  return { c, dot, status, show, cap, vid, key: keys[1] }
+}
+
+// Ligne d'options Android : qualité + sans fil, plein écran, envoi de fichiers, partage
+function mkAndroidTools(c) {
+  const pop = $.NSPopUpButton.alloc.initWithFramePullsDown(rect(14, 12, 140, 32), false)
+  pop.addItemsWithTitles($(QKEYS.map((k) => QUALITY[k].label)))
+  pop.selectItemAtIndex(QKEYS.indexOf(quality))
+  pop.setTarget(ctrl); pop.setAction('click:'); pop.setTag(12)
+  pop.setToolTip('Qualité du miroir et des vidéos (définition, débit, images/s)')
+  c.addSubview(pop)
+  const x0 = 162, bw = (CW - 14 - x0 - 3 * 6) / 4
+  const mk = (i, symbol, alt, tag, tip) => mkButton(c, '', sym(symbol) ? symbol : alt, rect(x0 + i * (bw + 6), 12, bw, 32), tag, null, tip)
+  return {
+    pop,
+    wifi: mk(0, 'wifi', 'antenna.radiowaves.left.and.right', 13, 'Sans fil : passer en Wi-Fi (puis débrancher le câble). Re-cliquer pour revenir à l’USB.'),
+    full: mk(1, 'arrow.up.left.and.arrow.down.right', 'rectangle.expand.vertical', 14, 'Miroir en plein écran (⌘F dans le miroir pour en sortir)'),
+    send: mk(2, 'square.and.arrow.up', 'arrow.up.doc', 15, 'Envoyer des fichiers : APK installés, autres fichiers dans Téléchargements. Le glisser-déposer sur le miroir marche aussi.'),
+    share: mk(3, 'person.2.wave.2', 'link', 16, 'Partager sur le réseau local : copie la commande pour un collègue (mode sans fil requis)'),
+  }
 }
 
 const win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
@@ -347,16 +451,17 @@ win.setContentView(root)
 
 // En-tête
 mkLabel(root, 'Miroir Téléphone', rect(20, H - 62, 260, 24), { size: 18, weight: 0.4 })
-mkLabel(root, 'Afficher · capturer · filmer en USB', rect(20, H - 80, 260, 16), { size: 12, color: $.NSColor.secondaryLabelColor })
+mkLabel(root, 'Afficher · piloter · capturer · filmer', rect(20, H - 80, 260, 16), { size: 12, color: $.NSColor.secondaryLabelColor })
 const pinBtn = mkIconButton(root, 'pin', rect(W - 48, H - 70, 30, 28), 11, 'Garder au premier plan')
 
 // Appareils
-const A = mkDevice(root, H - 92 - CH, 'Android', ['smartphone', 'candybarphone'], COLORS.green, [1, 2, 8], ['1', '2', '5'])
-const I = mkDevice(root, H - 92 - 2 * CH - 12, 'iPhone', ['iphone', 'iphone.gen3'], COLORS.blue, [3, 4, 9], ['3', '4', '6'])
+const A = mkDevice(root, H - 92 - CHA, CHA, 'Android', ['smartphone', 'candybarphone'], COLORS.green, [1, 2, 8], ['1', '2', '5'])
+const AT = mkAndroidTools(A.c)
+const I = mkDevice(root, H - 92 - CHA - CH - 12, CH, 'iPhone', ['iphone', 'iphone.gen3'], COLORS.blue, [3, 4, 9], ['3', '4', '6'])
 
 // Pied : message d'état puis dossier de sortie
 const statusLbl = mkLabel(root, '', rect(20, 46, W - 40, 34), { size: 11.5, wrap: true, color: $.NSColor.secondaryLabelColor })
-const folderBtn = mkButton(root, '', 'folder', rect(14, 10, 230, 32), 10, null, 'Choisir le dossier où enregistrer captures et vidéos')
+const folderBtn = mkButton(root, 'Dossier', 'folder', rect(14, 10, 230, 32), 10, null, 'Choisir le dossier où enregistrer captures et vidéos')
 mkButton(root, 'Ouvrir', 'arrow.up.forward.square', rect(W - 14 - 120, 10, 120, 32), 7, 'o', 'Ouvrir le dossier (⌘O)')
 
 function setStatus(msg) { if (msg) { statusLbl.setStringValue(msg); statusLbl.display } }
@@ -376,9 +481,15 @@ function paintDevice(d, color, text, enabled, recording, recStart) {
 function render() {
   if (!st.hasScrcpy || !st.hasAdb) paintDevice(A, 'orange', 'scrcpy absent — brew install scrcpy', false, false)
   else if (st.serial && st.recPid) paintDevice(A, 'red', 'Enregistrement en cours', true, true, st.recStart)
-  else if (st.serial) paintDevice(A, 'green', `Connecté · ${st.serial}`, true, false)
+  else if (st.serial) paintDevice(A, 'green', isWifi(st.serial) ? `Sans fil · ${st.serial}` : `Connecté en USB · ${st.serial}`, true, false)
   else if (st.androidUnauth) paintDevice(A, 'orange', 'Accepte le débogage USB sur le téléphone', false, false)
   else paintDevice(A, 'gray', 'Non branché', false, false)
+  const tools = !!st.serial && !st.recPid
+  ;[AT.full, AT.send].forEach((b) => b.setEnabled(tools))
+  AT.wifi.setEnabled(tools)
+  AT.wifi.setContentTintColor(isWifi(st.serial) ? $.NSColor.controlAccentColor : $())
+  AT.share.setEnabled(tools && isWifi(st.serial))
+  AT.pop.setEnabled(!st.recPid)
 
   if (st.ios && st.iosRec) paintDevice(I, 'red', 'Enregistrement en cours', true, true, st.iosStart)
   else if (st.ios) paintDevice(I, 'green', 'Connecté · via QuickTime', true, false)
@@ -397,8 +508,11 @@ function hint() {
 }
 
 // Détection automatique : un appareil qui vient d'être branché ouvre son miroir
+let polls = 0
 function poll(first) {
   const had = { serial: st.serial, ios: st.ios }
+  // Mode sans fil mémorisé : on retente la connexion toutes les ~15 s tant que le téléphone n'est pas vu
+  if (st.wifi && st.serial !== st.wifi && polls++ % 5 === 0) sh(tmo(3, `adb connect ${q(st.wifi)}`))
   detectAndroid(); detectIOS()
   const newAndroid = st.serial && st.serial !== had.serial
   const newIOS = st.ios && !had.ios
@@ -457,6 +571,11 @@ function onClick(tag) {
     case 8: setStatus(showAndroid()); break
     case 9: showIOS(); setStatus('🍏 Miroir iPhone (QuickTime) au premier plan'); break
     case 10: chooseFolder(); break
+    case 12: setStatus(setQuality(Number(AT.pop.indexOfSelectedItem))); break
+    case 13: setStatus('📶 …'); setStatus(wirelessToggle()); break
+    case 14: setStatus(fullscreenAndroid()); break
+    case 15: setStatus(sendFiles()); break
+    case 16: setStatus(shareAndroid()); break
     case 11: pinned = !pinned; setPref('pinned', pinned); hint(); break
   }
   render()

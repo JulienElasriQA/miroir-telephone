@@ -15,6 +15,12 @@ Petit panneau macOS pour **afficher, capturer et filmer l'écran d'un Android et
 ## Fonctionnalités
 
 - Détection automatique au branchement : le miroir s'ouvre tout seul.
+- **Pilotage complet** : clavier et souris du Mac contrôlent le téléphone dans la fenêtre du miroir.
+- **Qualité réglable** (Standard / Haute / Max) : définition, débit et images par seconde, pour le miroir comme pour les vidéos.
+- **Plein écran** en un clic (`⌘F` dans le miroir pour en sortir).
+- **Sans fil** : un clic passe le téléphone en Wi-Fi, puis le câble peut être débranché. L'adresse est mémorisée et la reconnexion est automatique. Un nouveau clic revient à l'USB.
+- **Envoi de fichiers** : un APK est installé, les autres fichiers vont dans *Téléchargements*. Le glisser-déposer sur la fenêtre du miroir fait la même chose.
+- **Partage sur le réseau local** : copie la commande `scrcpy --tcpip=IP:5555` pour qu'un collègue voie et pilote le téléphone. Le téléphone demande d'autoriser chaque nouveau poste.
 - Bouton **Miroir** sur chaque appareil : ramène la vue au premier plan, ou la rouvre si elle a été fermée, réduite ou s'est figée. Un miroir Android resté sans fenêtre est relancé automatiquement.
 - Captures et vidéos horodatées (`Android_2026-11-16_10-24-08.png`, `iPhone_….mov`), avec un son à l'enregistrement.
 - Chronomètre et bouton rouge pendant une vidéo ; une vidéo Android est finalisée proprement si le téléphone est débranché.
@@ -54,7 +60,7 @@ Le dossier [`portable/`](portable/) contient un portage en Python (customtkinter
 
 | | Windows / Linux |
 |---|---|
-| Android | miroir, capture PNG et vidéo MP4 (scrcpy) |
+| Android | miroir piloté au clavier et à la souris, capture PNG, vidéo MP4, qualité réglable, plein écran, sans fil, envoi de fichiers, partage sur le réseau local |
 | iPhone | recopie AirPlay seulement, via [UxPlay](https://github.com/FDH2/UxPlay) s'il est installé ; ni capture ni vidéo |
 | Droits admin | aucun dans la plupart des cas (voir ci-dessous) |
 
@@ -76,6 +82,21 @@ Le dossier [`portable/`](portable/) contient un portage en Python (customtkinter
 - Sous Windows, la vidéo s'enregistre depuis la fenêtre du miroir, renommée « Android - enregistrement ». Arrêter la vidéo ferme cette fenêtre, ce qui finalise le MP4, puis le miroir normal revient.
 - Sous Linux, le bouton Miroir ramène la fenêtre au premier plan si `wmctrl` ou `xdotool` est présent. Sinon, il relance le miroir.
 - Les binaires scrcpy officiels n'existent pas pour Linux ARM : installez scrcpy avec votre distribution.
+
+## Correspondance avec Vysor Pro
+
+| Vysor Pro | Miroir Téléphone |
+|---|---|
+| Miroir et contrôle | ✓ (scrcpy) |
+| Captures | ✓ (vidéo en plus) |
+| Miroir haute qualité | ✓ Standard / Haute / Max |
+| Plein écran | ✓ |
+| Sans fil | ✓ adb Wi-Fi, reconnexion automatique |
+| Glisser-déposer de fichiers | ✓ sur le miroir, et bouton « Envoyer » |
+| Vysor Share (lien Internet) | partiel : réseau local uniquement. Un partage par lien demanderait un serveur relais et ouvrirait un accès adb distant, ce qui pose un sujet de sécurité |
+| Contrôle de l'iPhone | ✗ : Apple ne le permet pas sans jailbreak. Affichage seul |
+
+**Sécurité du mode sans fil :** adb écoute sur le port 5555 du réseau Wi-Fi. Chaque nouvel ordinateur doit être autorisé sur le téléphone, mais ce mode est à éviter sur un réseau public. Pour le couper, recliquez sur le bouton ou redémarrez le téléphone.
 
 ## Limites connues
 
