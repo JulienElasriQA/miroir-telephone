@@ -48,6 +48,35 @@ L'app est un script [JXA](https://developer.apple.com/library/archive/releasenot
 - Vérifier le rendu sans écran : `MIROIR_SNAPSHOT=/tmp/ui.png osascript -l JavaScript src/miroir.js`
 - Journaux : `~/Library/Logs/MiroirTelephone.log` (app) et `~/Library/Logs/MiroirTelephone-scrcpy.log` (scrcpy)
 
+## Windows / Linux — ⚠️ expérimental
+
+Le dossier [`portable/`](portable/) contient un portage en Python (customtkinter). Les exécutables sont dans les [Releases](../../releases), marqués *pre-release*. Ce portage est testé automatiquement par GitHub Actions sur Windows et Ubuntu (interface, installation de scrcpy, exécutable), mais **pas encore avec un vrai téléphone**.
+
+| | Windows / Linux |
+|---|---|
+| Android | miroir, capture PNG et vidéo MP4 (scrcpy) |
+| iPhone | recopie AirPlay seulement, via [UxPlay](https://github.com/FDH2/UxPlay) s'il est installé ; ni capture ni vidéo |
+| Droits admin | aucun dans la plupart des cas (voir ci-dessous) |
+
+**Sans admin :**
+- Si scrcpy est absent, le bouton **Installer** télécharge la version officielle (adb compris) dans `%LOCALAPPDATA%\MiroirTelephone` ou `~/.local/share/miroir-telephone`, et vérifie sa somme SHA-256.
+- `install-windows.ps1` (Menu Démarrer et Bureau) et `install-linux.sh` (menu des applications) n'installent que pour l'utilisateur courant.
+- Pour lancer depuis les sources : `pip install --user -r portable/requirements.txt && python portable/miroir.py`. Sous Linux, tkinter est requis (`python3-tk`).
+
+**Avec admin, seulement si nécessaire :**
+- Linux, si la carte indique « Accès USB refusé » (règle udev, une seule fois) :
+  ```sh
+  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0660", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/51-android.rules
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+  `04e8` correspond à Samsung : remplacez-le par l'identifiant constructeur affiché par `lsusb`. Beaucoup de distributions fournissent déjà ces règles (paquet `android-sdk-platform-tools-common` ou `android-udev-rules`).
+- Windows, si le téléphone n'apparaît pas : installez le pilote USB du constructeur (par exemple *Samsung USB Driver*).
+
+**Différences avec la version macOS :**
+- Sous Windows, la vidéo s'enregistre depuis la fenêtre du miroir, renommée « Android - enregistrement ». Arrêter la vidéo ferme cette fenêtre, ce qui finalise le MP4, puis le miroir normal revient.
+- Sous Linux, le bouton Miroir ramène la fenêtre au premier plan si `wmctrl` ou `xdotool` est présent. Sinon, il relance le miroir.
+- Les binaires scrcpy officiels n'existent pas pour Linux ARM : installez scrcpy avec votre distribution.
+
 ## Limites connues
 
 - La vidéo iPhone passe par QuickTime, qui est sandboxé : le fichier est d'abord écrit dans `~/Movies/MiroirTelephone`, puis déplacé.

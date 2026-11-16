@@ -1,0 +1,95 @@
+# Portage Windows / Linux (expérimental) : tests, exécutables PyInstaller et pré-version GitHub.
+name: Portage Windows / Linux
+
+on:
+  push:
+    branches: [main]
+    paths: ["portable/**", ".github/workflows/portable.yml"]
+    tags: ["portable-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: MiroirTelephone-windows-x64.exe
+          - os: ubuntu-22.04 # glibc ancienne : le binaire tourne sur la plupart des distributions
+            artifact: MiroirTelephone-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r portable/requirements.txt pyinstaller pillow
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -yq xvfb; fi
+      - name: Icône Windows
+        run: python -c "from PIL import Image; Image.open('portable/assets/icon.png').save('portable/assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: Test - installation de scrcpy sans admin
+        run: python portable/miroir.py --install-scrcpy
+      - name: Test - interface et capture de la fenêtre
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" python portable/miroir.py --self-test
+            xvfb-run -a -s "-screen 0 1280x800x24" python portable/miroir.py --snapshot apercu-linux.png
+          else
+            python portable/miroir.py --self-test
+            python portable/miroir.py --snapshot apercu-windows.png
+          fi
+
+      - name: Exécutable
+        run: |
+          ICON=""; [ "$RUNNER_OS" = "Windows" ] && ICON="--icon portable/assets/icon.ico"
+          pyinstaller --noconfirm --onefile --windowed --name MiroirTelephone $ICON \
+            --collect-data customtkinter --add-data "portable/assets${{ runner.os == 'Windows' && ';' || ':' }}assets" \
+            portable/miroir.py
+          mv dist/MiroirTelephone* "dist/${{ matrix.artifact }}"
+      - name: Test - exécutable empaqueté
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "dist/${{ matrix.artifact }}" --self-test
+          else
+            # appli fenêtrée : on attend sa fin et on vérifie le code retour
+            p=$(powershell -Command "(Start-Process -FilePath 'dist/${{ matrix.artifact }}' -ArgumentList '--self-test' -Wait -PassThru).ExitCode")
+            echo "code retour : $p"; [ "$p" = "0" ]
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            apercu-*.png
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/portable-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Pré-version (expérimentale)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find out -type f
+          cp portable/install-linux.sh portable/install-windows.ps1 out/
+          gh release create "$GITHUB_REF_NAME" --prerelease \
+            --title "Windows / Linux $GITHUB_REF_NAME (expérimental)" \
+            --notes-file portable/RELEASE_NOTES.md \
+            out/*/dist/MiroirTelephone-* out/*/apercu-*.png out/install-linux.sh out/install-windows.ps1
