@@ -293,23 +293,23 @@ class Android:
     def show(self) -> str:
         """Bouton Miroir : premier plan si possible, sinon (re)lancement."""
         if not self.serial:
-            return "❌ Aucun Android prêt"
+            return "✗ Aucun Android prêt"
         if IS_WIN and self.recording:
             raise_window(REC_TITLE)
-            return "🤖 Miroir Android (enregistrement en cours)"
+            return "Miroir Android (enregistrement en cours)"
         if self._alive(self.mirror) and raise_window(MIRROR_TITLE):
-            return "🤖 Miroir Android au premier plan"
+            return "Miroir Android au premier plan"
         self.stop_mirror()
         self.open_mirror()
-        return "🤖 Ouverture du miroir Android…"
+        return "Ouverture du miroir Android…"
 
     def capture(self, out: Path) -> str:
         f = out / f"Android_{stamp()}.png"
         r = run([self.tools.adb, "-s", self.serial, "exec-out", "screencap", "-p"], timeout=15)
         if r and r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
             f.write_bytes(r.stdout)
-            return f"✅ Capture Android enregistrée : {f.name}"
-        return "❌ Échec de la capture Android"
+            return f"✓ Capture Android enregistrée : {f.name}"
+        return "✗ Échec de la capture Android"
 
     def start_video(self, out: Path) -> str:
         self.rec_file = out / f"Android_{stamp()}.mp4"
@@ -321,7 +321,7 @@ class Android:
         else:
             self.rec = self._spawn("--no-playback", "--no-window", "--record", str(self.rec_file))
         self.rec_start = time.time()
-        return "🔴 Vidéo Android en cours…"
+        return "● Vidéo Android en cours…"
 
     def stop_video(self) -> str:
         p, self.rec = self.rec, None
@@ -339,8 +339,8 @@ class Android:
             self.open_mirror()
         f = self.rec_file
         if f and f.exists() and f.stat().st_size > 0:
-            return f"✅ Vidéo Android enregistrée : {f.name}"
-        return "❌ Échec de la vidéo Android"
+            return f"✓ Vidéo Android enregistrée : {f.name}"
+        return "✗ Échec de la vidéo Android"
 
     def shutdown(self) -> None:
         if self.recording:
@@ -362,12 +362,12 @@ class IPhone:
 
     def show(self) -> str:
         if not self.tools.uxplay:
-            return "❌ UxPlay introuvable : voir le README pour l'installer"
+            return "✗ UxPlay introuvable : voir le README pour l'installer"
         if not self.running:
             log = open(LOG, "ab")  # noqa: SIM115
             self.proc = subprocess.Popen([self.tools.uxplay, "-n", APP_NAME, "-nh"], stdout=log,
                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
-        return f"🍏 Sur l'iPhone : Centre de contrôle → Recopie de l'écran → « {APP_NAME} »"
+        return f"Sur l'iPhone : Centre de contrôle → Recopie de l'écran → « {APP_NAME} »"
 
     def shutdown(self) -> None:
         if self.running:
@@ -389,7 +389,6 @@ class App:
         self.closing = False
 
         root.title(APP_NAME)
-        root.geometry("420x500")
         root.resizable(False, False)
         self._set_icon()
         self._build()
@@ -418,16 +417,20 @@ class App:
         ctk.CTkLabel(title_row, text=APP_NAME, font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
         ctk.CTkLabel(title_row, text=" EXPÉRIMENTAL ", font=ctk.CTkFont(size=10, weight="bold"),
                      fg_color=ORANGE, text_color="white", corner_radius=6).pack(side="left", padx=8)
-        self.pin = ctk.CTkButton(title_row, text="📌", width=34, height=30, command=self.toggle_pin,
-                                 fg_color="transparent", hover_color=("gray85", "gray25"))
+        sub = ctk.CTkFrame(head, fg_color="transparent")
+        sub.pack(fill="x")
+        ctk.CTkLabel(sub, text="Afficher · capturer · filmer", text_color=GRAY,
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self.pin = ctk.CTkSwitch(sub, text="Au premier plan", command=self.toggle_pin, font=ctk.CTkFont(size=12),
+                                 switch_width=34, switch_height=18)
         self.pin.pack(side="right")
-        ctk.CTkLabel(head, text="Afficher · capturer · filmer", text_color=GRAY,
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+        if self.pinned:
+            self.pin.select()
 
-        self.a = self._card("🤖", "Android", [("Miroir", "Ctrl+5", self.on_android_show),
+        self.a = self._card("A", GREEN, "Android", [("Miroir", "Ctrl+5", self.on_android_show),
                                                ("Capture", "Ctrl+1", self.on_android_capture),
                                                ("Vidéo", "Ctrl+2", self.on_android_video)])
-        self.i = self._card("🍏", "iPhone (AirPlay)", [("Miroir", "Ctrl+6", self.on_iphone_show)])
+        self.i = self._card("i", "#0A84FF", "iPhone (AirPlay)", [("Miroir", "Ctrl+6", self.on_iphone_show)])
 
         self.status = ctk.CTkLabel(r, text="", text_color=GRAY, wraplength=380, justify="left",
                                    font=ctk.CTkFont(size=12), anchor="w")
@@ -442,12 +445,14 @@ class App:
                       fg_color=("gray80", "gray30"), text_color=("gray10", "gray95"),
                       hover_color=("gray72", "gray38")).pack(side="left", padx=(8, 0))
 
-    def _card(self, icon: str, title: str, buttons) -> dict:
+    def _card(self, letter: str, color: str, title: str, buttons) -> dict:
         card = ctk.CTkFrame(self.root, corner_radius=14, border_width=1)
         card.pack(fill="x", padx=16, pady=6)
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.pack(fill="x", padx=14, pady=(12, 8))
-        ctk.CTkLabel(top, text=icon, font=ctk.CTkFont(size=30)).pack(side="left", padx=(0, 10))
+        # pastille dessinée (pas d'emoji : absents des polices de nombreuses distributions Linux)
+        ctk.CTkLabel(top, text=letter, width=40, height=40, corner_radius=10, fg_color=color, text_color="white",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(side="left", padx=(0, 12))
         txt = ctk.CTkFrame(top, fg_color="transparent")
         txt.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(txt, text=title, font=ctk.CTkFont(size=16, weight="bold"), anchor="w").pack(fill="x")
@@ -496,6 +501,23 @@ class App:
         else:
             self.set_status("Branche un Android (débogage USB activé) : il est détecté automatiquement.")
 
+    @staticmethod
+    def _enable(b: ctk.CTkButton, on: bool, text: str | None = None, danger: bool = False) -> None:
+        """customtkinter ne grise que le texte d'un bouton désactivé : on grise aussi le fond."""
+        theme = ctk.ThemeManager.theme["CTkButton"]
+        if danger:
+            fg, hover = RED, "#D70015"
+        elif on:
+            fg, hover = theme["fg_color"], theme["hover_color"]
+        else:
+            fg = hover = ("gray78", "gray28")
+        key = (on, text, danger)
+        if getattr(b, "_miroir_state", None) == key:  # évite de redessiner (et faire clignoter) à chaque tick
+            return
+        b._miroir_state = key
+        b.configure(state="normal" if on else "disabled", fg_color=fg, hover_color=hover,
+                    text_color_disabled=("gray55", "gray55"), **({"text": text} if text else {}))
+
     def _paint(self, card: dict, color: str, text: str) -> None:
         card["dot"].configure(text_color=color)
         card["status"].configure(text=text)
@@ -518,17 +540,14 @@ class App:
             self._paint(self.a, *texts.get(a.state, texts["none"]))
         ready = bool(a.serial) and not self.busy
         if a.state == "missing":
-            miroir.configure(text="Installer", state="normal" if not self.busy else "disabled")
+            self._enable(miroir, not self.busy, "Installer scrcpy")
         else:
-            miroir.configure(text="Miroir", state="normal" if ready else "disabled")
-        cap.configure(state="normal" if ready and not a.recording else "disabled")
+            self._enable(miroir, ready, "Miroir")
+        self._enable(cap, ready and not a.recording)
         if a.recording:
-            vid.configure(text=f"■ {fmt(time.time() - a.rec_start)}", fg_color=RED, hover_color="#D70015",
-                          state="normal")
+            self._enable(vid, True, f"■  {fmt(time.time() - a.rec_start)}", danger=True)
         else:
-            vid.configure(text="Vidéo", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"],
-                          hover_color=ctk.ThemeManager.theme["CTkButton"]["hover_color"],
-                          state="normal" if ready else "disabled")
+            self._enable(vid, ready, "Vidéo")
 
         ip = self.iphone
         if not self.tools.uxplay:
@@ -537,10 +556,9 @@ class App:
             self._paint(self.i, GREEN, "Récepteur AirPlay actif")
         else:
             self._paint(self.i, GRAY, "Prêt (UxPlay)")
-        self.i["buttons"][0].configure(state="normal" if self.tools.uxplay else "disabled")
+        self._enable(self.i["buttons"][0], bool(self.tools.uxplay))
 
-        self.folder.configure(text=f"📁 Dossier : {self.out_label()}")
-        self.pin.configure(text="📌" if self.pinned else "📍")
+        self.folder.configure(text=f"Dossier : {self.out_label()}")
         self.root.attributes("-topmost", self.pinned)
 
     # ---- boucle : détection en tâche de fond, interface sur le fil principal
@@ -560,7 +578,7 @@ class App:
         a.state, a.serial = result
         if a.serial and a.serial != had:
             a.open_mirror()
-            self.set_status("🤖 Android connecté : ouverture du miroir…")
+            self.set_status("Android connecté : ouverture du miroir…")
         elif had and not a.serial:
             self.hint()
         self._watchdog()
@@ -571,7 +589,7 @@ class App:
             age = time.time() - a.mirror_start
             a.mirror = None
             if age < 30:
-                self.set_status(f"❌ Le miroir Android s'est fermé. Détails : {LOG}")
+                self.set_status(f"✗ Le miroir Android s'est fermé. Détails : {LOG}")
         if a.rec is not None and a.rec.poll() is not None:  # téléphone débranché pendant la vidéo
             self.set_status(a.stop_video())
 
@@ -600,7 +618,7 @@ class App:
             try:
                 msg = fn(*args)
             except Exception as e:  # noqa: BLE001 (message à l'utilisateur)
-                msg = f"❌ {e}"
+                msg = f"✗ {e}"
             self.events.put(("done", msg))
 
         threading.Thread(target=work, daemon=True).start()
@@ -618,7 +636,7 @@ class App:
         tag = install_scrcpy()
         self.tools.refresh()
         start_adb_server(self.tools)
-        return f"✅ scrcpy {tag} installé dans {LOCAL_SCRCPY}"
+        return f"✓ scrcpy {tag} installé dans {LOCAL_SCRCPY}"
 
     def on_android_capture(self) -> None:
         if self.android.serial and not self.busy and not self.android.recording:
@@ -641,10 +659,10 @@ class App:
             self.out = Path(d)
             self.cfg["output"] = str(self.out)
             save_config(self.cfg)
-            self.set_status(f"📁 Fichiers enregistrés dans « {self.out_label()} »")
+            self.set_status(f"Fichiers enregistrés dans « {self.out_label()} »")
 
     def toggle_pin(self) -> None:
-        self.pinned = not self.pinned
+        self.pinned = bool(self.pin.get())
         self.cfg["pinned"] = self.pinned
         save_config(self.cfg)
 
