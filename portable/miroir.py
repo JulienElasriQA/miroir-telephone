@@ -519,7 +519,7 @@ class App:
         self.status.pack(fill="x", padx=22, pady=(6, 4))
         foot = ctk.CTkFrame(r, fg_color="transparent")
         foot.pack(fill="x", padx=16, pady=(0, 14))
-        self.folder = ctk.CTkButton(foot, text="", command=self.choose_folder, height=34,
+        self.folder = ctk.CTkButton(foot, text="", command=self.choose_folder, width=200, height=34,
                                     fg_color=("gray80", "gray30"), text_color=("gray10", "gray95"),
                                     hover_color=("gray72", "gray38"))
         self.folder.pack(side="left", fill="x", expand=True)
@@ -548,7 +548,7 @@ class App:
         row.pack(fill="x", padx=14, pady=(0, 10))
         btns = []
         for i, (label, key, cmd) in enumerate(buttons):
-            b = ctk.CTkButton(row, text=label, command=cmd, height=36, corner_radius=8)
+            b = ctk.CTkButton(row, text=label, command=cmd, width=100, height=36, corner_radius=8)
             b.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
             row.grid_columnconfigure(i, weight=1, uniform="b")
             btns.append(b)
@@ -559,7 +559,7 @@ class App:
         q = ctk.CTkFrame(card, fg_color="transparent")
         q.pack(fill="x", padx=14, pady=(0, 8))
         ctk.CTkLabel(q, text="Qualité", text_color=GRAY, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 8))
-        self.quality = ctk.CTkSegmentedButton(q, values=list(QUALITY), command=self.on_quality, height=28)
+        self.quality = ctk.CTkSegmentedButton(q, values=list(QUALITY), command=self.on_quality, width=240, height=28)
         self.quality.set(self.android.quality)
         self.quality.pack(side="left", fill="x", expand=True)
         row = ctk.CTkFrame(card, fg_color="transparent")
@@ -569,7 +569,8 @@ class App:
                                                ("full", "Plein écran", self.on_fullscreen),
                                                ("send", "Envoyer…", self.on_send),
                                                ("share", "Partager", self.on_share))):
-            b = ctk.CTkButton(row, text=label, command=cmd, height=30, corner_radius=8, font=ctk.CTkFont(size=12))
+            b = ctk.CTkButton(row, text=label, command=cmd, width=80, height=30, corner_radius=8,
+                              font=ctk.CTkFont(size=12))
             b.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0))
             row.grid_columnconfigure(i, weight=1, uniform="t")
             self.tools_btns[key] = b
