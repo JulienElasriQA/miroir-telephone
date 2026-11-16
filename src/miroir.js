@@ -1,6 +1,7 @@
 // Miroir Téléphone : panneau macOS pour afficher, capturer et filmer un Android (scrcpy)
 // et un iPhone (QuickTime) branchés en USB. Écrit en JXA (JavaScript for Automation) + Cocoa.
 ObjC.import('Cocoa')
+ObjC.import('CoreGraphics')
 
 const sys = Application.currentApplication()
 sys.includeStandardAdditions = true
@@ -41,7 +42,7 @@ const outLabel = () => (OUT === HOME + '/Desktop' ? 'Bureau' : OUT.replace(HOME,
 // ---------- État ----------
 const st = {
   hasScrcpy: !!sh('command -v scrcpy'), hasAdb: !!sh('command -v adb'),
-  serial: null, androidUnauth: false, mirrorPid: null, recPid: null, recFile: null, recStart: 0,
+  serial: null, androidUnauth: false, mirrorPid: null, mirrorStart: 0, mirrorRetries: 0, recPid: null, recFile: null, recStart: 0,
   ios: false, iosDoc: null, iosName: null, iosRec: false, iosStart: 0,
 }
 
@@ -54,9 +55,61 @@ function detectAndroid() {
   st.androidUnauth = lines.some((l) => /\tunauthorized$/.test(l))
 }
 
+const SCRCPY_LOG = HOME + '/Library/Logs/MiroirTelephone-scrcpy.log'
+
+// Nombre de fenêtres visibles d'un processus (sans permission particulière)
+function visibleWindows(pid) {
+  try {
+    const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16 /* visibles, hors bureau */, 0)))
+    return list.filter((w) => w.kCGWindowOwnerPID === Number(pid) && w.kCGWindowLayer === 0).length
+  } catch (e) { return -1 }
+}
+
+function activatePid(pid) {
+  const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(pid))
+  if (!a.isNil()) a.activateWithOptions(3 /* toutes les fenêtres, au premier plan */)
+}
+
+function killMirror() {
+  if (alive(st.mirrorPid)) sh(`kill ${st.mirrorPid}; sleep 0.5`)
+  st.mirrorPid = null
+}
+
+function startMirror() {
+  st.mirrorPid = sh(`scrcpy -s ${q(st.serial)} --stay-awake --window-title 'Android' >>${q(SCRCPY_LOG)} 2>&1 & echo $!`)
+  st.mirrorStart = now()
+}
+
+// Lancement automatique au branchement
 function openAndroid() {
   if (!st.serial || !st.hasScrcpy || alive(st.mirrorPid)) return
-  st.mirrorPid = sh(`scrcpy -s ${q(st.serial)} --stay-awake --window-title 'Android' >/dev/null 2>&1 & echo $!`)
+  st.mirrorRetries = 0
+  startMirror()
+}
+
+// Bouton « Miroir » : ramène la fenêtre au premier plan, sinon (fermée, réduite ou figée) relance scrcpy
+function showAndroid() {
+  if (!st.serial || !st.hasScrcpy) return '❌ Aucun Android prêt'
+  if (alive(st.mirrorPid) && visibleWindows(st.mirrorPid) > 0) { activatePid(st.mirrorPid); return '🤖 Miroir Android au premier plan' }
+  killMirror()
+  st.mirrorRetries = 0
+  startMirror()
+  return '🤖 Ouverture du miroir Android…'
+}
+
+// Surveillance : scrcpy lancé mais sans fenêtre après 15 s (adb figé) → relance ; scrcpy mort au démarrage → erreur
+function watchMirror() {
+  if (!st.serial || !st.mirrorPid) return
+  const age = now() - st.mirrorStart
+  if (!alive(st.mirrorPid)) {
+    st.mirrorPid = null
+    if (age < 30) setStatus('❌ Le miroir Android s’est fermé. Détails : ~/Library/Logs/MiroirTelephone-scrcpy.log')
+  } else if (age > 15 && age < 60 && visibleWindows(st.mirrorPid) === 0 && st.mirrorRetries < 2) {
+    st.mirrorRetries++
+    killMirror()
+    startMirror()
+    setStatus('🔄 Miroir Android bloqué : relance en cours…')
+  }
 }
 
 function androidCapture() {
@@ -270,10 +323,10 @@ function mkDevice(parent, y, title, icon, tint, tags, keys) {
   mkLabel(c, title, rect(58, 80, 220, 22), { size: 15, weight: 0.3 })
   const dot = mkImage(c, rect(58, 65, 10, 14), sym('circle.fill', 7), COLORS.gray)
   const status = mkLabel(c, '', rect(72, 63, CW - 72 - 44, 17), { size: 12, color: $.NSColor.secondaryLabelColor })
-  const show = mkIconButton(c, 'macwindow', rect(CW - 42, 72, 30, 28), tags[2], 'Afficher le miroir')
-  const bw = (CW - 38) / 2
-  const cap = mkButton(c, 'Capture', 'camera', rect(14, 12, bw, 34), tags[0], keys[0], `Capture d’écran (⌘${keys[0]})`)
-  const vid = mkButton(c, 'Vidéo', 'record.circle', rect(24 + bw, 12, bw, 34), tags[1], keys[1], `Démarrer / arrêter la vidéo (⌘${keys[1]})`)
+  const bw = (CW - 28 - 16) / 3
+  const show = mkButton(c, 'Miroir', 'macwindow', rect(14, 12, bw, 34), tags[2], keys[2], `Afficher la vue miroir (⌘${keys[2]})`)
+  const cap = mkButton(c, 'Capture', 'camera', rect(22 + bw, 12, bw, 34), tags[0], keys[0], `Capture d’écran (⌘${keys[0]})`)
+  const vid = mkButton(c, 'Vidéo', 'record.circle', rect(30 + 2 * bw, 12, bw, 34), tags[1], keys[1], `Démarrer / arrêter la vidéo (⌘${keys[1]})`)
   return { dot, status, show, cap, vid, key: keys[1] }
 }
 
@@ -298,8 +351,8 @@ mkLabel(root, 'Afficher · capturer · filmer en USB', rect(20, H - 80, 260, 16)
 const pinBtn = mkIconButton(root, 'pin', rect(W - 48, H - 70, 30, 28), 11, 'Garder au premier plan')
 
 // Appareils
-const A = mkDevice(root, H - 92 - CH, 'Android', ['smartphone', 'candybarphone'], COLORS.green, [1, 2, 8], ['1', '2'])
-const I = mkDevice(root, H - 92 - 2 * CH - 12, 'iPhone', ['iphone', 'iphone.gen3'], COLORS.blue, [3, 4, 9], ['3', '4'])
+const A = mkDevice(root, H - 92 - CH, 'Android', ['smartphone', 'candybarphone'], COLORS.green, [1, 2, 8], ['1', '2', '5'])
+const I = mkDevice(root, H - 92 - 2 * CH - 12, 'iPhone', ['iphone', 'iphone.gen3'], COLORS.blue, [3, 4, 9], ['3', '4', '6'])
 
 // Pied : message d'état puis dossier de sortie
 const statusLbl = mkLabel(root, '', rect(20, 46, W - 40, 34), { size: 11.5, wrap: true, color: $.NSColor.secondaryLabelColor })
@@ -314,7 +367,7 @@ function paintDevice(d, color, text, enabled, recording, recStart) {
   d.cap.setEnabled(enabled && !recording)
   d.vid.setEnabled(enabled)
   d.show.setEnabled(enabled)
-  d.vid.setTitle(recording ? `Arrêter  ${fmt(now() - recStart)}` : 'Vidéo')
+  d.vid.setTitle(recording ? fmt(now() - recStart) : 'Vidéo')
   d.vid.setImage(sym(recording ? 'stop.fill' : 'record.circle', 13, 0.23))
   d.vid.setBezelColor(recording ? COLORS.red : $())
   d.vid.setKeyEquivalent(d.key)
@@ -363,7 +416,7 @@ function onTick() {
     st.recPid = null
     setStatus(fileOk(st.recFile) ? '✅ Vidéo Android enregistrée (appareil déconnecté)' : '❌ Vidéo Android interrompue')
   }
-  if (ticks % 3 === 0) poll(false)
+  if (ticks % 3 === 0) { poll(false); watchMirror() }
   else if (st.recPid || st.iosRec) render()
 }
 
@@ -385,7 +438,7 @@ function quit() {
   quitting = true
   safe(stopAndroidVideo)
   safe(stopIOSVideo)
-  if (alive(st.mirrorPid)) sh(`kill ${st.mirrorPid}`)
+  killMirror()
   try { if (iosDocAlive()) st.iosDoc.close({ saving: 'no' }) } catch (e) {}
   $.NSApp.terminate(null)
 }
@@ -401,8 +454,8 @@ function onClick(tag) {
       if (!iosDocAlive()) { st.iosRec = false; openIOS(); delay(1) }
       setStatus(tag === 3 ? iosCapture() : iosVideoToggle()); break
     case 7: sh(`open ${q(OUT)}`); hint(); break
-    case 8: openAndroid(); hint(); break
-    case 9: showIOS(); hint(); break
+    case 8: setStatus(showAndroid()); break
+    case 9: showIOS(); setStatus('🍏 Miroir iPhone (QuickTime) au premier plan'); break
     case 10: chooseFolder(); break
     case 11: pinned = !pinned; setPref('pinned', pinned); hint(); break
   }

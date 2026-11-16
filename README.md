@@ -15,11 +15,12 @@ Petit panneau macOS pour **afficher, capturer et filmer l'écran d'un Android et
 ## Fonctionnalités
 
 - Détection automatique au branchement : le miroir s'ouvre tout seul.
+- Bouton **Miroir** sur chaque appareil : ramène la vue au premier plan, ou la rouvre si elle a été fermée, réduite ou s'est figée. Un miroir Android resté sans fenêtre est relancé automatiquement.
 - Captures et vidéos horodatées (`Android_2026-11-16_10-24-08.png`, `iPhone_….mov`), avec un son à l'enregistrement.
 - Chronomètre et bouton rouge pendant une vidéo ; une vidéo Android est finalisée proprement si le téléphone est débranché.
 - Dossier de sortie au choix (Bureau par défaut), mémorisé.
 - Fenêtre flottante (épingle) pour rester au-dessus du miroir ; position mémorisée.
-- Raccourcis : `⌘1` capture Android, `⌘2` vidéo Android, `⌘3` capture iPhone, `⌘4` vidéo iPhone, `⌘O` ouvrir le dossier, `⌘Q` quitter.
+- Raccourcis : `⌘5` miroir Android, `⌘6` miroir iPhone, `⌘1` capture Android, `⌘2` vidéo Android, `⌘3` capture iPhone, `⌘4` vidéo iPhone, `⌘O` ouvrir le dossier, `⌘Q` quitter.
 - Clair / sombre automatique.
 
 ## Installation
@@ -45,7 +46,7 @@ L'app est un script [JXA](https://developer.apple.com/library/archive/releasenot
 
 - Lancer sans bundle : `osascript -l JavaScript src/miroir.js`
 - Vérifier le rendu sans écran : `MIROIR_SNAPSHOT=/tmp/ui.png osascript -l JavaScript src/miroir.js`
-- Journaux : `~/Library/Logs/MiroirTelephone.log`
+- Journaux : `~/Library/Logs/MiroirTelephone.log` (app) et `~/Library/Logs/MiroirTelephone-scrcpy.log` (scrcpy)
 
 ## Limites connues
 
