@@ -45,7 +45,7 @@ Petit panneau macOS pour **afficher, capturer et filmer l'écran d'un Android et
 brew install scrcpy          # fournit aussi adb
 git clone https://github.com/JulienElasriQA/miroir-telephone.git
 cd miroir-telephone
-./build.sh --install         # crée ~/Applications/Miroir Téléphone.app
+./build.sh --install         # crée /Applications/Miroir Téléphone.app
 ```
 
 Ensuite, lancez **Miroir Téléphone** depuis Spotlight, le Launchpad ou le Dock.

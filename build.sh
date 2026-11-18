@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Construit « Miroir Téléphone.app » dans build/. Avec --install, la copie dans ~/Applications.
+# Construit « Miroir Téléphone.app » dans build/. Avec --install, la copie dans /Applications (dossier Applications du Mac).
 set -euo pipefail
 
 ROOT=${0:A:h}
@@ -59,10 +59,14 @@ codesign --force --deep --sign - "$APP" 2>/dev/null || echo "  (signature ad hoc
 echo "✓ $APP"
 
 if [[ ${1:-} == --install ]]; then
-  DEST="$HOME/Applications/$NAME.app"
-  mkdir -p "$HOME/Applications"
+  # Dossier Applications du Mac (visible dans les réglages de confidentialité), pas ~/Applications
+  DEST="/Applications/$NAME.app"
+  [ -w /Applications ] || { echo "✗ /Applications non accessible en écriture (compte administrateur requis)" >&2; exit 1; }
   rm -rf "$DEST"
   cp -R "$APP" "$DEST"
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST" || true
+  # Ancienne copie dans ~/Applications : supprimée pour éviter deux apps (et deux entrées de confidentialité)
+  OLD="$HOME/Applications/$NAME.app"
+  [ -d "$OLD" ] && [ ! -L "$OLD" ] && rm -rf "$OLD" && echo "  ancienne copie supprimée : $OLD"
   echo "✓ Installée : $DEST (Spotlight : « Miroir »)"
 fi
