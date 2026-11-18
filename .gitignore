@@ -4,3 +4,10 @@ __pycache__/
 dist/
 *.spec
 portable/assets/icon.ico
+Test_*/
+Campagne_*.html
+Android_*.mp4
+Android_*.png
+iPhone_*.mov
+iPhone_*.png
+*_micro.m4a

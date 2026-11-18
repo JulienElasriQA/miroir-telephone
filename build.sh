@@ -21,9 +21,13 @@ iconutil -c icns "$BUILD/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.ic
 
 echo "→ Bundle"
 cp "$ROOT/src/miroir.js" "$APP/Contents/Resources/"
+cp "$ROOT/src/test-runner.sh" "$ROOT/src/ecran.sh" "$ROOT/src/capture.sh" "$ROOT/src/squash.sh" "$ROOT/src/rapport.js" "$APP/Contents/Resources/"
+chmod +x "$APP/Contents/Resources/test-runner.sh" "$APP/Contents/Resources/ecran.sh" "$APP/Contents/Resources/capture.sh" "$APP/Contents/Resources/squash.sh"
 cat >"$APP/Contents/MacOS/miroir" <<'EOF'
 #!/bin/zsh
 # Lance le panneau JXA. exec garde le PID : le Dock et le menu affichent bien l'app.
+# Variables de test neutralisées : elles ne doivent pas détourner le runner, l'URL Squash ou les captures
+unset MIROIR_RUNNER DRY_RUN MIROIR_SNAPSHOT MIROIR_SNAPSHOT_SETTINGS MIROIR_SNAPSHOT_SQUASH MIROIR_SNAPSHOT_PROJECT MIROIR_SNAPSHOT_FOLDER MIROIR_SNAPSHOT_CHECK MIROIR_SNAPSHOT_CAMPAIGN MIROIR_SQUASH_URL
 export MIROIR_RES="${0:A:h:h}/Resources"
 exec /usr/bin/osascript -l JavaScript "$MIROIR_RES/miroir.js" 2>>"$HOME/Library/Logs/MiroirTelephone.log"
 EOF
@@ -46,6 +50,7 @@ cat >"$APP/Contents/Info.plist" <<EOF
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>Miroir Téléphone pilote QuickTime Player pour afficher et filmer l’iPhone.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Miroir Téléphone enregistre ta voix pour commenter les vidéos Android.</string>
 </dict>
 </plist>
 EOF
